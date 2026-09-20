@@ -226,8 +226,18 @@ const discoverSkills = Effect.fnUntraced(function* (
     }
   }
 
+  const canonical = new Set<string>()
+  const matches: string[] = []
+  // Keep the first logical location before parsing fans out, but retain every permission directory.
+  for (const match of state.matches) {
+    const resolved = yield* fsys.resolve(match)
+    if (canonical.has(resolved)) continue
+    canonical.add(resolved)
+    matches.push(match)
+  }
+
   return {
-    matches: Array.from(state.matches),
+    matches,
     dirs: Array.from(state.dirs),
   }
 })
