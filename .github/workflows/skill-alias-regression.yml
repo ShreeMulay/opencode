@@ -1,0 +1,39 @@
+name: Skill alias regression
+
+on:
+  pull_request:
+    branches: [plan-agent-exit]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skill-alias-regression:
+    name: skill-alias-regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Skill regression suite
+        working-directory: packages/opencode
+        run: bun test test/skill/skill.test.ts
+      - name: Typecheck
+        working-directory: packages/opencode
+        run: bun typecheck
+      - name: Legacy plan transition reminder
+        working-directory: packages/opencode
+        run: bun test test/session/prompt.test.ts --test-name-pattern 'legacy plan transition reminder applies once to a custom agent without persisting'

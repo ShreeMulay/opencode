@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Logger } from "effect"
 import { Skill } from "../../src/skill"
 import { Discovery } from "../../src/skill/discovery"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
@@ -64,6 +64,65 @@ const withHome = <A, E, R>(home: string, self: Effect.Effect<A, E, R>) =>
   )
 
 describe("skill", () => {
+  for (const target of [".agents", ".config/opencode"]) {
+    for (const alias of [true, false]) {
+      it.live(`${alias ? "deduplicates aliases" : "warns for distinct equal-content files"} in .claude and ${target}`, () =>
+        provideTmpdirInstance(
+          (dir) =>
+            withHome(
+              dir,
+              Effect.gen(function* () {
+                const physical = path.join(dir, target, "skills", "nested", "shared")
+                const logical = path.join(dir, ".claude", "skills", "shared")
+                const content = "---\nname: shared\ndescription: Shared skill.\n---\n\nShared instructions.\n"
+                yield* Effect.promise(async () => {
+                  await Bun.write(path.join(physical, "SKILL.md"), content)
+                  await fs.mkdir(path.dirname(logical), { recursive: true })
+                  if (alias) await fs.symlink(physical, logical, "dir")
+                  if (!alias) await Bun.write(path.join(logical, "SKILL.md"), content)
+                  await Bun.write(
+                    path.join(dir, "opencode.json"),
+                    JSON.stringify({ skills: { paths: [path.dirname(physical), physical, logical, physical] } }),
+                  )
+                })
+
+                const warnings: unknown[] = []
+                const logger = Logger.make<unknown, void>((options) => {
+                  if (options.logLevel === "Warn") warnings.push(options.message)
+                })
+                const skill = yield* Skill.Service
+                const list = yield* skill.all().pipe(Effect.provide(Logger.layer([logger])))
+                const shared = list.filter((item) => item.name === "shared")
+                expect(shared).toHaveLength(1)
+                const locations = [path.join(logical, "SKILL.md"), path.join(physical, "SKILL.md")]
+                const duplicates = warnings.filter((message) =>
+                  Array.isArray(message) && message[0] === "duplicate skill name",
+                )
+                if (alias) {
+                  expect(duplicates).toEqual([])
+                  expect(shared[0].location).toBe(locations[0])
+                }
+                if (!alias) {
+                  expect(duplicates).toHaveLength(1)
+                  // Concurrent parsing keeps its existing last-completion-wins behavior.
+                  expect(duplicates[0]).toEqual([
+                    "duplicate skill name",
+                    {
+                      name: "shared",
+                      existing: locations.find((location) => location !== shared[0].location),
+                      duplicate: shared[0].location,
+                    },
+                  ])
+                }
+                expect(yield* skill.dirs()).toEqual(expect.arrayContaining([logical, physical]))
+              }),
+            ),
+          { git: true },
+        ),
+      )
+    }
+  }
+
   it.effect("formats verbose locations as XML-safe filesystem paths", () =>
     Effect.sync(() => {
       const output = Skill.fmt(
